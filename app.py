@@ -61,7 +61,7 @@ def obtener_fuente(ruta_preferida, tamaño):
 
 def cargar_fuentes():
     return {
-        "titulo":      obtener_fuente("assets/Archivo-Bold.ttf", 48),
+        "titulo":      obtener_fuente("assets/Archivo-Bold.ttf", 65),
         "fecha_header":obtener_fuente("assets/ArchivoBlack-Regular.ttf", 60),
         "categoria":   obtener_fuente("assets/Archivo-Bold.ttf", 30),
         "info":        obtener_fuente("assets/Archivo-Regular.ttf", 35),
