@@ -24,20 +24,20 @@ COLOR_BLANCO = (255, 255, 255)
 
 MARGEN_IZQ = 230
 MARGEN_DER = 50
-MARGEN_INFERIOR_CANVAS = 80 
+MARGEN_INFERIOR_CANVAS = 100 
 MARGEN_IZQ_TRAMA = 227 
 
 # Restricción Superior (Pixel mínimo donde puede empezar la fecha)
-MIN_Y_FECHA = 100
+MIN_Y_FECHA = 116
 
 MODO_BLENDING = 'lighten'  
 OPACIDAD_TRAMA = 1.0  
 
 # --- AJUSTE DE ESPACIADOS PARA QUE ENTREN 4 ---
 # Reducimos un poco los aires para ganar espacio vertical
-ESPACIO_ENTRE_EVENTOS = 75      # Antes 90
-DISTANCIA_LINEA_EVENTOS = 50    # Antes 60
-DISTANCIA_FECHA_LINEA = 75      # Antes 80
+ESPACIO_ENTRE_EVENTOS = 90      # Antes 90
+DISTANCIA_LINEA_EVENTOS = 60    # Antes 60
+DISTANCIA_FECHA_LINEA = 80      # Antes 80
 
 # --- FUNCIONES ---
 
@@ -296,6 +296,7 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Ocurrió un error: {e}")
+
 
 
 
