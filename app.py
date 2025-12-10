@@ -45,10 +45,10 @@ CFG_COMFORT = {
 # MODO COMPACTO (Para 4 eventos) - Valores intermedios
 # Ajustados para que no estén pegados, ya que me dijiste que sobraba espacio arriba.
 CFG_COMPACT = {
-    "ESPACIO_ENTRE_EVENTOS": 60,     # Antes puse 45 (muy pegado), ahora 65
+    "ESPACIO_ENTRE_EVENTOS": 65,     # Antes puse 45 (muy pegado), ahora 65
     "DISTANCIA_LINEA_EVENTOS": 50,   # Antes 40, ahora 50
-    "DISTANCIA_FECHA_LINEA": 70,     # Antes 60, ahora 70
-    "MARGEN_INFERIOR_CANVAS": 65     # Antes 70, ahora 85
+    "DISTANCIA_FECHA_LINEA": 75,     # Antes 60, ahora 70
+    "MARGEN_INFERIOR_CANVAS": 60     # Antes 70, ahora 85
 }
 
 # --- FUNCIONES ---
@@ -317,6 +317,7 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Ocurrió un error: {e}")
+
 
 
 
