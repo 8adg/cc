@@ -12,7 +12,7 @@ st.set_page_config(page_title="Generador de Posts", page_icon="🎨")
 st.title("🎨 Generador de Agenda Cultural")
 st.markdown("""
 Sube tu archivo **CSV** y descarga las imágenes. 
-Si un día tiene muchos eventos, el sistema generará automáticamente varias imágenes (Parte 1, Parte 2...) respetando los márgenes.
+Si un día tiene muchos eventos, el sistema generará automáticamente varias imágenes.
 """)
 
 # --- CONFIGURACIÓN DISEÑO ---
@@ -27,16 +27,17 @@ MARGEN_DER = 50
 MARGEN_INFERIOR_CANVAS = 100 
 MARGEN_IZQ_TRAMA = 227 
 
-# --- RESTRICCIÓN SUPERIOR (NUEVO) ---
-# La fecha nunca estará más arriba que este píxel
+# Restricción Superior (Pixel mínimo donde puede empezar la fecha)
 MIN_Y_FECHA = 116 
 
 MODO_BLENDING = 'lighten'  
 OPACIDAD_TRAMA = 1.0  
 
-ESPACIO_ENTRE_EVENTOS = 90
-DISTANCIA_LINEA_EVENTOS = 60
-DISTANCIA_FECHA_LINEA = 80
+# --- AJUSTE DE ESPACIADOS PARA QUE ENTREN 4 ---
+# Reducimos un poco los aires para ganar espacio vertical
+ESPACIO_ENTRE_EVENTOS = 75      # Antes 90
+DISTANCIA_LINEA_EVENTOS = 50    # Antes 60
+DISTANCIA_FECHA_LINEA = 75      # Antes 80
 
 # --- FUNCIONES ---
 
@@ -57,7 +58,7 @@ def cargar_fuentes():
     }
 
 def calcular_altura_evento(fila):
-    """ Calcula la altura exacta en píxeles que ocupará un evento individual """
+    """ Calcula la altura exacta en píxeles que ocupará un evento """
     altura_acumulada = 0
     altura_acumulada += 45 # Categoría
     
@@ -71,19 +72,9 @@ def calcular_altura_evento(fila):
 
 def paginar_eventos(grupo_eventos):
     """
-    Divide una lista de eventos en varias páginas si exceden la altura permitida.
-    Retorna una lista de DataFrames (uno por página).
+    Divide los eventos en páginas calculando si entran en el espacio disponible.
     """
-    # 1. Calcular espacio máximo disponible para los eventos
-    # Formula: Alto Total - Margen Abajo - (Espacio ocupado por el Header Arriba)
-    # El Header Arriba ocupa: MIN_Y_FECHA + AlturaFecha(aprox) + DistanciaLinea + DistanciaEventos
-    
-    # Altura ocupada por la cabecera antes de empezar a escribir eventos:
-    # (El texto fecha mide aprox 60px de alto, pero la coord Y es el top, así que usamos las distancias relativas)
-    # y_linea = y_fecha + 80
-    # y_inicio_eventos = y_linea + 60
-    # Por tanto, el tope de eventos es: MIN_Y_FECHA + 80 + 60 = MIN_Y_FECHA + 140
-    
+    # Calculamos el espacio disponible REAL basándonos en el tope superior (116px)
     tope_superior_eventos = MIN_Y_FECHA + DISTANCIA_FECHA_LINEA + DISTANCIA_LINEA_EVENTOS
     tope_inferior_eventos = ALTO - MARGEN_INFERIOR_CANVAS
     
@@ -96,26 +87,25 @@ def paginar_eventos(grupo_eventos):
     for index, fila in grupo_eventos.iterrows():
         h_evento = calcular_altura_evento(fila)
         
-        # Calcular cuánto ocuparía si lo agregamos
-        # Si ya hay eventos, sumamos el espacio entre eventos
+        # Espacio que ocuparía este evento
         espacio_necesario = h_evento
+        # Si ya hay eventos en la página, sumamos el margen entre ellos
         if len(pagina_actual) > 0:
             espacio_necesario += ESPACIO_ENTRE_EVENTOS
             
         if (altura_actual + espacio_necesario) <= max_altura_disponible:
-            # Entra en la página actual
+            # SÍ Entra
             pagina_actual.append(fila)
             altura_actual += espacio_necesario
         else:
-            # No entra, cerramos página actual y creamos una nueva
-            if pagina_actual: # Guardar la anterior si tiene algo
+            # NO Entra: Cerramos página actual
+            if pagina_actual: 
                 paginas.append(pd.DataFrame(pagina_actual))
             
-            # Iniciar nueva página con este evento
+            # Iniciamos nueva página
             pagina_actual = [fila]
             altura_actual = h_evento
             
-    # Guardar la última página pendiente
     if pagina_actual:
         paginas.append(pd.DataFrame(pagina_actual))
         
@@ -166,26 +156,26 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     if cantidad_eventos > 1:
         altura_total_contenido += (cantidad_eventos - 1) * ESPACIO_ENTRE_EVENTOS
 
-    # Calculamos dónde empiezan los eventos desde abajo
     y_inicio_eventos = ALTO - MARGEN_INFERIOR_CANVAS - altura_total_contenido
-    
-    # Calculamos las líneas superiores relativas a los eventos
     y_linea = y_inicio_eventos - DISTANCIA_LINEA_EVENTOS
     y_fecha = y_linea - DISTANCIA_FECHA_LINEA 
     
-    # --- RESTRICCIÓN DE SEGURIDAD ---
-    # Gracias a la paginación, esto casi nunca debería pasar, pero forzamos por si acaso.
-    # Si por alguna razón matemática y_fecha quedó muy arriba, la app no se rompe,
-    # solo se verá un poco apretado abajo, pero respetará el margen superior.
+    # RESTRICCIÓN DE SEGURIDAD (Si el cálculo dice que debe ir más arriba de 116px, lo bajamos)
     if y_fecha < MIN_Y_FECHA:
         diferencia = MIN_Y_FECHA - y_fecha
         y_fecha = MIN_Y_FECHA
         y_linea += diferencia
         y_inicio_eventos += diferencia
 
-    # 2. TRAMA
+    # 2. TRAMA (Solo si hay menos de 4 eventos)
+    # Si hay 4 o más, asumimos que está muy lleno y no la mostramos para limpiar visualmente
     limite_trama = int(y_fecha - 10) 
-    if os.path.exists("assets/trama.png") and limite_trama > 0:
+    
+    mostrar_trama = True
+    if cantidad_eventos >= 4:
+        mostrar_trama = False
+
+    if mostrar_trama and os.path.exists("assets/trama.png") and limite_trama > 0:
         try:
             tira = Image.open("assets/trama.png").convert("RGBA")
             if OPACIDAD_TRAMA < 1.0:
@@ -266,7 +256,6 @@ if uploaded_file is not None:
                 status_text = st.empty()
                 fuentes = cargar_fuentes()
                 
-                # Agrupamos por fecha
                 grupos = df.groupby('Fecha_Abreviada', sort=False)
                 total_grupos = len(grupos)
                 
@@ -276,17 +265,14 @@ if uploaded_file is not None:
                     for i, (fecha, grupo) in enumerate(grupos):
                         status_text.text(f"Analizando: {fecha}...")
                         
-                        # PAGINACIÓN: Dividimos el grupo en páginas si es necesario
+                        # PAGINACIÓN
                         paginas = paginar_eventos(grupo)
                         
                         for idx_pag, pagina_data in enumerate(paginas):
-                            # Generamos la imagen para esta página
                             img = generar_imagen_en_memoria(fecha, pagina_data, fuentes)
                             
-                            # Nombrado de archivo
                             nombre_base = str(fecha).replace(" ", "_").replace("/", "-")
                             
-                            # Si hay más de una página, agregamos sufijo _1, _2
                             if len(paginas) > 1:
                                 nombre_archivo = f"post_{nombre_base}_{idx_pag + 1}.png"
                             else:
