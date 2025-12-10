@@ -136,7 +136,7 @@ def dibujar_evento(draw, y_pos, fila, fuentes):
     y_pos += 15 
 
     lugar_texto = f"Lugar: {fila['Lugar']}"
-    if len(lugar_texto) > 40: lugar_texto = lugar_texto[:37] + "..."
+    if len(lugar_texto) > 60: lugar_texto = lugar_texto[:57] + "..."
     draw.text((MARGEN_IZQ, y_pos), lugar_texto, font=fuentes["info"], fill=COLOR_AZUL)
     y_pos += 45
 
