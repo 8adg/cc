@@ -24,7 +24,7 @@ COLOR_BLANCO = (255, 255, 255)
 
 MARGEN_IZQ = 230
 MARGEN_DER = 50
-MARGEN_INFERIOR_CANVAS = 100 
+MARGEN_INFERIOR_CANVAS = 80 
 MARGEN_IZQ_TRAMA = 227 
 
 # Restricción Superior (Pixel mínimo donde puede empezar la fecha)
@@ -296,3 +296,4 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Ocurrió un error: {e}")
+
