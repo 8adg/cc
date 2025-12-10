@@ -12,7 +12,7 @@ st.set_page_config(page_title="Generador de Posts", page_icon="🎨")
 st.title("🎨 Generador de Agenda Cultural")
 st.markdown("""
 Sube tu archivo **CSV** y descarga las imágenes. 
-Si un día tiene muchos eventos, el sistema generará automáticamente varias imágenes.4
+El sistema ajustará automáticamente hasta **4 eventos por imagen**. Si hay más, creará una segunda parte.
 """)
 
 # --- CONFIGURACIÓN DISEÑO ---
@@ -24,20 +24,20 @@ COLOR_BLANCO = (255, 255, 255)
 
 MARGEN_IZQ = 230
 MARGEN_DER = 50
-MARGEN_INFERIOR_CANVAS = 100 
 MARGEN_IZQ_TRAMA = 227 
 
-# Restricción Superior (Pixel mínimo donde puede empezar la fecha)
-MIN_Y_FECHA = 116
+# Restricción Superior
+MIN_Y_FECHA = 116 
 
 MODO_BLENDING = 'lighten'  
 OPACIDAD_TRAMA = 1.0  
 
-# --- AJUSTE DE ESPACIADOS PARA QUE ENTREN 4 ---
-# Reducimos un poco los aires para ganar espacio vertical
-ESPACIO_ENTRE_EVENTOS = 90      # Antes 90
-DISTANCIA_LINEA_EVENTOS = 60    # Antes 60
-DISTANCIA_FECHA_LINEA = 80      # Antes 80
+# --- AJUSTE DE ESPACIADOS (COMPACTACIÓN PARA 4 EVENTOS) ---
+# Reducimos espacios verticales para permitir que entren 4 items
+ESPACIO_ENTRE_EVENTOS = 45      # Antes 75
+DISTANCIA_LINEA_EVENTOS = 40    # Antes 50
+DISTANCIA_FECHA_LINEA = 60      # Antes 75
+MARGEN_INFERIOR_CANVAS = 70     # Antes 100
 
 # --- FUNCIONES ---
 
@@ -74,7 +74,7 @@ def paginar_eventos(grupo_eventos):
     """
     Divide los eventos en páginas calculando si entran en el espacio disponible.
     """
-    # Calculamos el espacio disponible REAL basándonos en el tope superior (116px)
+    # Calculamos el espacio disponible REAL basándonos en las nuevas métricas compactas
     tope_superior_eventos = MIN_Y_FECHA + DISTANCIA_FECHA_LINEA + DISTANCIA_LINEA_EVENTOS
     tope_inferior_eventos = ALTO - MARGEN_INFERIOR_CANVAS
     
@@ -87,9 +87,7 @@ def paginar_eventos(grupo_eventos):
     for index, fila in grupo_eventos.iterrows():
         h_evento = calcular_altura_evento(fila)
         
-        # Espacio que ocuparía este evento
         espacio_necesario = h_evento
-        # Si ya hay eventos en la página, sumamos el margen entre ellos
         if len(pagina_actual) > 0:
             espacio_necesario += ESPACIO_ENTRE_EVENTOS
             
@@ -102,7 +100,7 @@ def paginar_eventos(grupo_eventos):
             if pagina_actual: 
                 paginas.append(pd.DataFrame(pagina_actual))
             
-            # Iniciamos nueva página
+            # Iniciamos nueva página con el evento que sobró
             pagina_actual = [fila]
             altura_actual = h_evento
             
@@ -147,10 +145,18 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
 
     # 1. CÁLCULO BOTTOM-UP
     altura_total_contenido = 0
-    lista_filas = list(datos_grupo.iterrows())
-    cantidad_eventos = len(lista_filas)
+    # datos_grupo puede ser un DataFrame o lista de dicts, aseguramos iterrows si es DF
+    if isinstance(datos_grupo, pd.DataFrame):
+        lista_filas = list(datos_grupo.iterrows())
+        # iterrows devuelve (index, serie), nos quedamos con serie para calcular
+        items_para_calcular = [fila for idx, fila in lista_filas]
+    else:
+        # Si ya viene como lista de series (raro, pero por seguridad)
+        items_para_calcular = datos_grupo
+
+    cantidad_eventos = len(items_para_calcular)
     
-    for index, fila in lista_filas:
+    for fila in items_para_calcular:
         altura_total_contenido += calcular_altura_evento(fila)
     
     if cantidad_eventos > 1:
@@ -160,15 +166,14 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     y_linea = y_inicio_eventos - DISTANCIA_LINEA_EVENTOS
     y_fecha = y_linea - DISTANCIA_FECHA_LINEA 
     
-    # RESTRICCIÓN DE SEGURIDAD (Si el cálculo dice que debe ir más arriba de 116px, lo bajamos)
+    # RESTRICCIÓN DE SEGURIDAD
     if y_fecha < MIN_Y_FECHA:
         diferencia = MIN_Y_FECHA - y_fecha
         y_fecha = MIN_Y_FECHA
         y_linea += diferencia
         y_inicio_eventos += diferencia
 
-    # 2. TRAMA (Solo si hay menos de 4 eventos)
-    # Si hay 4 o más, asumimos que está muy lleno y no la mostramos para limpiar visualmente
+    # 2. TRAMA (Solo si hay MENOS de 4 eventos)
     limite_trama = int(y_fecha - 10) 
     
     mostrar_trama = True
@@ -226,7 +231,8 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
 
     # 4. Eventos
     y_cursor = y_inicio_eventos
-    for i, (index, fila) in enumerate(lista_filas):
+    # Iteramos sobre items_para_calcular que preparamos antes
+    for fila in items_para_calcular:
         y_fin = dibujar_evento(draw, y_cursor, fila, fuentes)
         y_cursor = y_fin + ESPACIO_ENTRE_EVENTOS
     
@@ -296,8 +302,3 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Ocurrió un error: {e}")
-
-
-
-
-
