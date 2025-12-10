@@ -27,7 +27,7 @@ MARGEN_DER = 50
 MARGEN_IZQ_TRAMA = 227 
 
 # Restricción Superior
-MIN_Y_FECHA = 116 
+MIN_Y_FECHA = 98 
 
 MODO_BLENDING = 'lighten'  
 OPACIDAD_TRAMA = 1.0  
