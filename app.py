@@ -12,7 +12,7 @@ st.set_page_config(page_title="Generador de Posts", page_icon="🎨")
 st.title("🎨 Generador de Agenda Cultural")
 st.markdown("""
 Sube tu archivo **CSV** y descarga las imágenes. 
-Si un día tiene muchos eventos, el sistema generará automáticamente varias imágenes.
+Si un día tiene muchos eventos, el sistema generará automáticamente varias imágenes.4
 """)
 
 # --- CONFIGURACIÓN DISEÑO ---
@@ -296,4 +296,5 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Ocurrió un error: {e}")
+
 
