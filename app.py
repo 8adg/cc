@@ -5,6 +5,7 @@ import os
 import textwrap
 import io
 import zipfile
+import math
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Generador de Posts", page_icon="🎨")
@@ -12,7 +13,7 @@ st.set_page_config(page_title="Generador de Posts", page_icon="🎨")
 st.title("🎨 Generador de Agenda Cultural")
 st.markdown("""
 Sube tu archivo **CSV**. 
-El sistema usará un diseño **aireado** para pocos eventos y uno **compacto** (pero legible) si detecta 4 eventos.
+El sistema usará **Paginación Balanceada** (ej: 5 eventos se dividen en 3 y 2) y aplicará tu configuración compacta personalizada solo cuando sea necesario.
 """)
 
 # --- CONFIGURACIÓN DISEÑO ---
@@ -26,15 +27,15 @@ MARGEN_IZQ = 230
 MARGEN_DER = 50
 MARGEN_IZQ_TRAMA = 227 
 
-# Restricción Superior (Pixel mínimo donde puede empezar la fecha)
+# Restricción Superior
 MIN_Y_FECHA = 116 
 
 MODO_BLENDING = 'lighten'  
 OPACIDAD_TRAMA = 1.0  
 
-# --- DEFINICIÓN DE DOS MODOS DE ESPACIADO ---
+# --- MODOS DE ESPACIADO ---
 
-# MODO COMFORT (Para 1, 2 o 3 eventos) - Valores originales
+# MODO COMFORT (Para 1, 2 o 3 eventos) - Diseño aireado con trama
 CFG_COMFORT = {
     "ESPACIO_ENTRE_EVENTOS": 90,
     "DISTANCIA_LINEA_EVENTOS": 60,
@@ -42,13 +43,12 @@ CFG_COMFORT = {
     "MARGEN_INFERIOR_CANVAS": 100
 }
 
-# MODO COMPACTO (Para 4 eventos) - Valores intermedios
-# Ajustados para que no estén pegados, ya que me dijiste que sobraba espacio arriba.
+# MODO COMPACTO (Para 4 eventos) - TUS VALORES PERSONALIZADOS
 CFG_COMPACT = {
-    "ESPACIO_ENTRE_EVENTOS": 69,     # Antes puse 45 (muy pegado), ahora 65
-    "DISTANCIA_LINEA_EVENTOS": 50,   # Antes 40, ahora 50
-    "DISTANCIA_FECHA_LINEA": 75,     # Antes 60, ahora 70
-    "MARGEN_INFERIOR_CANVAS": 60     # Antes 70, ahora 85
+    "ESPACIO_ENTRE_EVENTOS": 69,     # Ajustado por ti
+    "DISTANCIA_LINEA_EVENTOS": 50,   # Ajustado por ti
+    "DISTANCIA_FECHA_LINEA": 75,     # Ajustado por ti
+    "MARGEN_INFERIOR_CANVAS": 60     # Ajustado por ti (Más espacio abajo ganado)
 }
 
 # --- FUNCIONES ---
@@ -71,55 +71,49 @@ def cargar_fuentes():
 
 def calcular_altura_evento(fila):
     altura_acumulada = 0
-    altura_acumulada += 45 # Categoría
-    
+    altura_acumulada += 45 
     titulo = str(fila['Evento']).upper()
     lineas_titulo = textwrap.wrap(titulo, width=18)
     altura_acumulada += (len(lineas_titulo) * 70) + 15 
-    
-    altura_acumulada += 45 # Lugar
-    altura_acumulada += 35 # Cuándo
+    altura_acumulada += 45 
+    altura_acumulada += 35 
     return altura_acumulada
 
-def paginar_eventos(grupo_eventos):
+def paginar_eventos_balanceado(grupo_eventos):
     """
-    Divide los eventos. 
-    IMPORTANTE: Para calcular si entran, usamos las métricas COMPACTAS.
-    Esto permite que el paginador sea permisivo y acepte agrupar 4 eventos.
-    Si luego son menos, el renderizador usará las métricas COMFORT.
+    Divide los eventos equitativamente.
+    Ej: 5 eventos -> 2 páginas. Reparto: 3 y 2.
+    Max por página deseado: 4.
     """
+    total_items = len(grupo_eventos)
+    max_por_pagina = 4
     
-    # Usamos configuración compacta para el cálculo de capacidad máxima
-    cfg = CFG_COMPACT 
+    # Si entra todo en una (<=4), devolvemos directo
+    if total_items <= max_por_pagina:
+        return [grupo_eventos]
+
+    # Calcular cuántas páginas necesitamos
+    num_paginas = math.ceil(total_items / max_por_pagina)
     
-    tope_superior_eventos = MIN_Y_FECHA + cfg["DISTANCIA_FECHA_LINEA"] + cfg["DISTANCIA_LINEA_EVENTOS"]
-    tope_inferior_eventos = ALTO - cfg["MARGEN_INFERIOR_CANVAS"]
+    # Calcular cuántos items base van por página
+    items_base = total_items // num_paginas
     
-    max_altura_disponible = tope_inferior_eventos - tope_superior_eventos
+    # Calcular el resto para repartir
+    sobrantes = total_items % num_paginas
     
     paginas = []
-    pagina_actual = []
-    altura_actual = 0
+    inicio = 0
     
-    for index, fila in grupo_eventos.iterrows():
-        h_evento = calcular_altura_evento(fila)
+    for i in range(num_paginas):
+        # Repartimos los sobrantes en las primeras páginas
+        extra = 1 if i < sobrantes else 0
+        cantidad = items_base + extra
         
-        espacio_necesario = h_evento
-        if len(pagina_actual) > 0:
-            espacio_necesario += cfg["ESPACIO_ENTRE_EVENTOS"]
-            
-        if (altura_actual + espacio_necesario) <= max_altura_disponible:
-            pagina_actual.append(fila)
-            altura_actual += espacio_necesario
-        else:
-            if pagina_actual: 
-                paginas.append(pd.DataFrame(pagina_actual))
-            
-            pagina_actual = [fila]
-            altura_actual = h_evento
-            
-    if pagina_actual:
-        paginas.append(pd.DataFrame(pagina_actual))
+        fin = inicio + cantidad
+        subset = grupo_eventos.iloc[inicio:fin]
+        paginas.append(subset)
+        
+        inicio = fin
         
     return paginas
 
@@ -136,7 +130,7 @@ def dibujar_evento(draw, y_pos, fila, fuentes):
     y_pos += 15 
 
     lugar_texto = f"Lugar: {fila['Lugar']}"
-    if len(lugar_texto) > 60: lugar_texto = lugar_texto[:57] + "..."
+    if len(lugar_texto) > 40: lugar_texto = lugar_texto[:37] + "..."
     draw.text((MARGEN_IZQ, y_pos), lugar_texto, font=fuentes["info"], fill=COLOR_AZUL)
     y_pos += 45
 
@@ -157,7 +151,6 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     img = Image.new('RGB', (ANCHO, ALTO), color=COLOR_FONDO)
     draw = ImageDraw.Draw(img)
 
-    # Convertir datos a lista para contar
     if isinstance(datos_grupo, pd.DataFrame):
         lista_filas = list(datos_grupo.iterrows())
         items_para_calcular = [fila for idx, fila in lista_filas]
@@ -167,10 +160,12 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     cantidad_eventos = len(items_para_calcular)
 
     # --- SELECCIÓN DINÁMICA DE CONFIGURACIÓN ---
+    # Si hay 4 o más (ej: una página llena), usamos tu configuración COMPACTA
     if cantidad_eventos >= 4:
         cfg = CFG_COMPACT
-        mostrar_trama = False # Si hay 4 o más, ocultamos trama para limpiar
+        mostrar_trama = False
     else:
+        # Si hay 1, 2 o 3 (ej: una página normal o una dividida), usamos COMFORT
         cfg = CFG_COMFORT
         mostrar_trama = True
 
@@ -249,7 +244,7 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     y_cursor = y_inicio_eventos
     for fila in items_para_calcular:
         y_fin = dibujar_evento(draw, y_cursor, fila, fuentes)
-        y_cursor = y_fin + cfg["ESPACIO_ENTRE_EVENTOS"] # Usamos el espacio de la config elegida
+        y_cursor = y_fin + cfg["ESPACIO_ENTRE_EVENTOS"]
     
     return img
 
@@ -286,8 +281,8 @@ if uploaded_file is not None:
                     for i, (fecha, grupo) in enumerate(grupos):
                         status_text.text(f"Analizando: {fecha}...")
                         
-                        # PAGINACIÓN
-                        paginas = paginar_eventos(grupo)
+                        # USAMOS PAGINACIÓN BALANCEADA
+                        paginas = paginar_eventos_balanceado(grupo)
                         
                         for idx_pag, pagina_data in enumerate(paginas):
                             img = generar_imagen_en_memoria(fecha, pagina_data, fuentes)
@@ -317,7 +312,3 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Ocurrió un error: {e}")
-
-
-
-
