@@ -54,7 +54,7 @@ CFG_COMFORT = {
 
 # MODO COMPACTO (Para 4 eventos) - Valores compactos, ajustados a LINEA_BASE
 CFG_COMPACT = {
-    "ESPACIO_ENTRE_EVENTOS": to_base(65),   # 65
+    "ESPACIO_ENTRE_EVENTOS": to_base(75),   # 65
     "DISTANCIA_LINEA_EVENTOS": to_base(50), # 50
     "DISTANCIA_FECHA_LINEA": to_base(70),   # 70
     "MARGEN_INFERIOR_CANVAS": to_base(85)   # 85
