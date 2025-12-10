@@ -11,10 +11,11 @@ st.set_page_config(page_title="Generador de Posts", page_icon="🎨")
 
 st.title("🎨 Generador de Agenda Cultural")
 st.markdown("""
-Sube tu archivo **CSV** con la agenda semanal y descarga las imágenes listas para Instagram.
+Sube tu archivo **CSV** y descarga las imágenes. 
+Si un día tiene muchos eventos, el sistema generará automáticamente varias imágenes (Parte 1, Parte 2...) respetando los márgenes.
 """)
 
-# --- CONFIGURACIÓN DISEÑO (Igual que tu script) ---
+# --- CONFIGURACIÓN DISEÑO ---
 ANCHO = 1080
 ALTO = 1350
 COLOR_FONDO = (242, 101, 50)
@@ -26,6 +27,10 @@ MARGEN_DER = 50
 MARGEN_INFERIOR_CANVAS = 100 
 MARGEN_IZQ_TRAMA = 227 
 
+# --- RESTRICCIÓN SUPERIOR (NUEVO) ---
+# La fecha nunca estará más arriba que este píxel
+MIN_Y_FECHA = 116 
+
 MODO_BLENDING = 'lighten'  
 OPACIDAD_TRAMA = 1.0  
 
@@ -33,17 +38,15 @@ ESPACIO_ENTRE_EVENTOS = 90
 DISTANCIA_LINEA_EVENTOS = 60
 DISTANCIA_FECHA_LINEA = 80
 
-# --- FUNCIONES DE LÓGICA (Adaptadas para Web) ---
+# --- FUNCIONES ---
 
 def obtener_fuente(ruta_preferida, tamaño):
-    # En web, las rutas deben ser relativas a la carpeta del proyecto
     try:
         return ImageFont.truetype(ruta_preferida, tamaño)
     except IOError:
         return ImageFont.load_default()
 
 def cargar_fuentes():
-    # Asegúrate de que la carpeta 'assets' esté subida junto con este script
     return {
         "titulo":      obtener_fuente("assets/Archivo-Bold.ttf", 65),
         "fecha_header":obtener_fuente("assets/ArchivoBlack-Regular.ttf", 60),
@@ -54,14 +57,69 @@ def cargar_fuentes():
     }
 
 def calcular_altura_evento(fila):
+    """ Calcula la altura exacta en píxeles que ocupará un evento individual """
     altura_acumulada = 0
-    altura_acumulada += 45
+    altura_acumulada += 45 # Categoría
+    
     titulo = str(fila['Evento']).upper()
     lineas_titulo = textwrap.wrap(titulo, width=18)
-    altura_acumulada += (len(lineas_titulo) * 70) + 15
-    altura_acumulada += 45
-    altura_acumulada += 35
+    altura_acumulada += (len(lineas_titulo) * 70) + 15 # Título + margin
+    
+    altura_acumulada += 45 # Lugar
+    altura_acumulada += 35 # Cuándo
     return altura_acumulada
+
+def paginar_eventos(grupo_eventos):
+    """
+    Divide una lista de eventos en varias páginas si exceden la altura permitida.
+    Retorna una lista de DataFrames (uno por página).
+    """
+    # 1. Calcular espacio máximo disponible para los eventos
+    # Formula: Alto Total - Margen Abajo - (Espacio ocupado por el Header Arriba)
+    # El Header Arriba ocupa: MIN_Y_FECHA + AlturaFecha(aprox) + DistanciaLinea + DistanciaEventos
+    
+    # Altura ocupada por la cabecera antes de empezar a escribir eventos:
+    # (El texto fecha mide aprox 60px de alto, pero la coord Y es el top, así que usamos las distancias relativas)
+    # y_linea = y_fecha + 80
+    # y_inicio_eventos = y_linea + 60
+    # Por tanto, el tope de eventos es: MIN_Y_FECHA + 80 + 60 = MIN_Y_FECHA + 140
+    
+    tope_superior_eventos = MIN_Y_FECHA + DISTANCIA_FECHA_LINEA + DISTANCIA_LINEA_EVENTOS
+    tope_inferior_eventos = ALTO - MARGEN_INFERIOR_CANVAS
+    
+    max_altura_disponible = tope_inferior_eventos - tope_superior_eventos
+    
+    paginas = []
+    pagina_actual = []
+    altura_actual = 0
+    
+    for index, fila in grupo_eventos.iterrows():
+        h_evento = calcular_altura_evento(fila)
+        
+        # Calcular cuánto ocuparía si lo agregamos
+        # Si ya hay eventos, sumamos el espacio entre eventos
+        espacio_necesario = h_evento
+        if len(pagina_actual) > 0:
+            espacio_necesario += ESPACIO_ENTRE_EVENTOS
+            
+        if (altura_actual + espacio_necesario) <= max_altura_disponible:
+            # Entra en la página actual
+            pagina_actual.append(fila)
+            altura_actual += espacio_necesario
+        else:
+            # No entra, cerramos página actual y creamos una nueva
+            if pagina_actual: # Guardar la anterior si tiene algo
+                paginas.append(pd.DataFrame(pagina_actual))
+            
+            # Iniciar nueva página con este evento
+            pagina_actual = [fila]
+            altura_actual = h_evento
+            
+    # Guardar la última página pendiente
+    if pagina_actual:
+        paginas.append(pd.DataFrame(pagina_actual))
+        
+    return paginas
 
 def dibujar_evento(draw, y_pos, fila, fuentes):
     cat_texto = f"—{str(fila['Categoria']).upper()}"
@@ -97,7 +155,7 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     img = Image.new('RGB', (ANCHO, ALTO), color=COLOR_FONDO)
     draw = ImageDraw.Draw(img)
 
-    # 1. Cálculos
+    # 1. CÁLCULO BOTTOM-UP
     altura_total_contenido = 0
     lista_filas = list(datos_grupo.iterrows())
     cantidad_eventos = len(lista_filas)
@@ -108,11 +166,24 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     if cantidad_eventos > 1:
         altura_total_contenido += (cantidad_eventos - 1) * ESPACIO_ENTRE_EVENTOS
 
+    # Calculamos dónde empiezan los eventos desde abajo
     y_inicio_eventos = ALTO - MARGEN_INFERIOR_CANVAS - altura_total_contenido
+    
+    # Calculamos las líneas superiores relativas a los eventos
     y_linea = y_inicio_eventos - DISTANCIA_LINEA_EVENTOS
     y_fecha = y_linea - DISTANCIA_FECHA_LINEA 
+    
+    # --- RESTRICCIÓN DE SEGURIDAD ---
+    # Gracias a la paginación, esto casi nunca debería pasar, pero forzamos por si acaso.
+    # Si por alguna razón matemática y_fecha quedó muy arriba, la app no se rompe,
+    # solo se verá un poco apretado abajo, pero respetará el margen superior.
+    if y_fecha < MIN_Y_FECHA:
+        diferencia = MIN_Y_FECHA - y_fecha
+        y_fecha = MIN_Y_FECHA
+        y_linea += diferencia
+        y_inicio_eventos += diferencia
 
-    # 2. Trama
+    # 2. TRAMA
     limite_trama = int(y_fecha - 10) 
     if os.path.exists("assets/trama.png") and limite_trama > 0:
         try:
@@ -177,7 +248,6 @@ uploaded_file = st.file_uploader("Arrastra tu CSV aquí", type=["csv"])
 
 if uploaded_file is not None:
     try:
-        # Cargar datos
         try:
             df = pd.read_csv(uploaded_file, encoding='utf-8', dtype=str)
         except UnicodeDecodeError:
@@ -186,47 +256,51 @@ if uploaded_file is not None:
         df.fillna("", inplace=True)
         df.columns = df.columns.str.strip()
 
-        # Verificar columnas
         if 'Fecha_Abreviada' not in df.columns:
             st.error("❌ El CSV no tiene la columna 'Fecha_Abreviada'. Revisa el formato.")
         else:
-            st.success(f"✅ Archivo cargado: {len(df)} eventos encontrados.")
+            st.success(f"✅ Archivo cargado. {len(df)} eventos detectados.")
             
             if st.button("🚀 Generar Imágenes"):
-                # Barra de progreso
                 progress_bar = st.progress(0)
                 status_text = st.empty()
-                
-                # Cargar fuentes una sola vez
                 fuentes = cargar_fuentes()
-                grupos = df.groupby('Fecha_Abreviada')
+                
+                # Agrupamos por fecha
+                grupos = df.groupby('Fecha_Abreviada', sort=False)
                 total_grupos = len(grupos)
                 
-                # Buffer para el ZIP
                 zip_buffer = io.BytesIO()
                 
                 with zipfile.ZipFile(zip_buffer, "w") as zf:
                     for i, (fecha, grupo) in enumerate(grupos):
-                        status_text.text(f"Procesando: {fecha}...")
+                        status_text.text(f"Analizando: {fecha}...")
                         
-                        # Generar imagen (PIL Image)
-                        img = generar_imagen_en_memoria(fecha, grupo, fuentes)
+                        # PAGINACIÓN: Dividimos el grupo en páginas si es necesario
+                        paginas = paginar_eventos(grupo)
                         
-                        # Convertir a bytes para el ZIP
-                        img_bytes = io.BytesIO()
-                        img.save(img_bytes, format='PNG')
+                        for idx_pag, pagina_data in enumerate(paginas):
+                            # Generamos la imagen para esta página
+                            img = generar_imagen_en_memoria(fecha, pagina_data, fuentes)
+                            
+                            # Nombrado de archivo
+                            nombre_base = str(fecha).replace(" ", "_").replace("/", "-")
+                            
+                            # Si hay más de una página, agregamos sufijo _1, _2
+                            if len(paginas) > 1:
+                                nombre_archivo = f"post_{nombre_base}_{idx_pag + 1}.png"
+                            else:
+                                nombre_archivo = f"post_{nombre_base}.png"
+                            
+                            img_bytes = io.BytesIO()
+                            img.save(img_bytes, format='PNG')
+                            zf.writestr(nombre_archivo, img_bytes.getvalue())
                         
-                        # Nombre del archivo dentro del ZIP
-                        nombre_limpio = str(fecha).replace(" ", "_").replace("/", "-")
-                        zf.writestr(f"post_{nombre_limpio}.png", img_bytes.getvalue())
-                        
-                        # Actualizar barra
                         progress_bar.progress((i + 1) / total_grupos)
                 
                 status_text.text("¡Listo! Imágenes generadas.")
                 progress_bar.empty()
                 
-                # Botón de Descarga
                 st.download_button(
                     label="📥 Descargar Imágenes (ZIP)",
                     data=zip_buffer.getvalue(),
