@@ -28,7 +28,7 @@ MARGEN_INFERIOR_CANVAS = 80
 MARGEN_IZQ_TRAMA = 227 
 
 # Restricción Superior (Pixel mínimo donde puede empezar la fecha)
-MIN_Y_FECHA = 110
+MIN_Y_FECHA = 100
 
 MODO_BLENDING = 'lighten'  
 OPACIDAD_TRAMA = 1.0  
@@ -296,6 +296,7 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Ocurrió un error: {e}")
+
 
 
 
