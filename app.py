@@ -1,4 +1,4 @@
-import streamlit as stpx)
+import streamlit as st
 
 Modifico las funciones `calcular_altura_evento`, `dibujar_evento` y las constantes de espaciado para que todo respete la rejilla de 15px.
 
