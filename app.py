@@ -15,7 +15,7 @@ st.set_page_config(page_title="Generador de Posts", page_icon="🎨")
 
 st.title("C‒C Generador de Agenda Cultural")
 st.markdown("""
-Los datos se extraen automáticamente de la URL de la agenda (usando la estructura de listas HTML) y genera las imágenes para posts de Instagram. 
+Los datos se extraen automáticamente de la web y se generan las imágenes **numeradas secuencialmente** para ordenar tu feed.
 """)
 
 # --- CONFIGURACIÓN DISEÑO ---
@@ -233,14 +233,10 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     
     return img
 
-# --- FUNCIONES DE SCRAPING Y PROCESAMIENTO (Ajuste a Estructura HTML) ---
+# --- FUNCIONES DE SCRAPING Y PROCESAMIENTO ---
 
 @st.cache_data
 def obtener_texto_agenda(url, clase_contenedor):
-    """ 
-    Descarga el contenido, encuentra el contenedor, e itera sobre <li> para
-    obtener bloques de texto de evento.
-    """
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
@@ -253,37 +249,26 @@ def obtener_texto_agenda(url, clase_contenedor):
             dias_semana_base = ["LUNES", "MARTES", "MIÉRCOLES", "JUEVES", "VIERNES", "SÁBADO", "DOMINGO"]
             dia_actual = None
             
-            # 1. Encontrar todos los encabezados de DÍA (H2, H3, etc.)
-            for tag in contenedor.find_all(['h2', 'h3', 'h4', 'p', 'ul', 'li']): # Incluimos UL para el contexto
-                
+            for tag in contenedor.find_all(['h2', 'h3', 'h4', 'p', 'ul', 'li']):
                 texto_limpio = tag.get_text(strip=True).upper()
                 
-                # 2. Detectar encabezado de día y actualizar el día actual
                 es_dia = False
                 for dia_base in dias_semana_base:
                     if texto_limpio.startswith(dia_base):
-                        dia_actual = dia_base # Guarda el día base
+                        dia_actual = dia_base 
                         es_dia = True
                         break
                 
-                # 3. Procesar LI (asumimos que LI son los eventos)
                 if tag.name == 'li' and dia_actual:
-                    # Quitamos etiquetas de formato (strong, em) para limpiar el texto
                     for fmt_tag in tag.find_all(['strong', 'em', 'a', 'br']):
                          if fmt_tag.name == 'br':
-                             # Sustituir <br> por un separador fuerte que luego usaremos
                              fmt_tag.replace_with(' _SEP_ ') 
                          else:
-                            # Mantener el texto, pero eliminar el tag (ej: <strong>Texto</strong> -> Texto)
                             fmt_tag.unwrap()
                         
-                    # Obtenemos el texto limpio y lo dividimos por el separador
                     lineas_evento = tag.get_text(separator=' ', strip=True).split(' _SEP_ ')
-                    
-                    # Limpiamos y eliminamos vacíos. Deberían ser 4 líneas (Cat|Ev, Lugar, Hora, Info)
                     lineas_evento = [l.strip() for l in lineas_evento if l.strip()]
 
-                    # Verificamos que tengamos al menos Título, Lugar y Hora/Info
                     if len(lineas_evento) >= 3:
                         eventos_en_bruto.append({
                             'Dia': dia_actual,
@@ -291,18 +276,14 @@ def obtener_texto_agenda(url, clase_contenedor):
                         })
             
             return eventos_en_bruto
-            
         else:
             return f"ERROR: No se encontró el contenedor con la clase '{clase_contenedor}'."
-            
     except requests.exceptions.RequestException as e:
         return f"ERROR de conexión: {e}"
     except Exception as e:
         return f"ERROR desconocido al procesar la página: {e}"
 
-
 def texto_a_dataframe(datos_pre_procesados):
-    """ Procesa la lista de bloques de evento (ya pre-formateada) a DataFrame. """
     eventos_procesados = []
     
     if isinstance(datos_pre_procesados, str) or not datos_pre_procesados:
@@ -313,25 +294,20 @@ def texto_a_dataframe(datos_pre_procesados):
         dia_base = item['Dia']
         
         try:
-            # Línea 1: CATEGORIA | EVENTO
+            # Línea 1
             partes_evento = bloque[0].split('|', 1)
             categoria = partes_evento[0].strip()
             nombre_evento = partes_evento[1].strip() if len(partes_evento) > 1 else "Sin Título"
 
-            # Línea 2: LUGAR (Aplicamos la limpieza de paréntesis aquí)
+            # Línea 2: Limpieza de paréntesis
             lugar_sucio = bloque[1].strip()
-            # ----------------------------------------------------------------------------------
-            # AJUSTE PRINCIPAL: Eliminar contenido entre paréntesis
             lugar = re.sub(r'\s*\([^)]*\)', '', lugar_sucio).strip() 
-            # ----------------------------------------------------------------------------------
 
-
-            # Línea 3: FECHA_ABREVIADA – HORA
+            # Línea 3
             partes_fecha_hora = re.split(r'\s*–\s*|\s*-\s*', bloque[2], 1)
             fecha_abreviada = partes_fecha_hora[0].strip()
             hora = partes_fecha_hora[1].strip() if len(partes_fecha_hora) > 1 else "N/A"
 
-            # Obtenemos el nombre del día final (Ej: Miércoles)
             dia_final = ""
             if fecha_abreviada.upper().startswith('MIER'): dia_final = 'Miércoles'
             elif fecha_abreviada.upper().startswith('JUEV'): dia_final = 'Jueves'
@@ -371,12 +347,12 @@ if st.button("🔄 Actualizar y Generar Imágenes desde la Web"):
             df = texto_a_dataframe(datos_en_bruto)
 
             if df.empty:
-                st.warning("⚠️ No se encontraron eventos en el texto extraído. Verifica la URL y la clase del contenedor.")
+                st.warning("⚠️ No se encontraron eventos. Verifica la URL.")
             else:
                 st.success(f"✅ Agenda procesada: {len(df)} eventos listos.")
                 st.dataframe(df[['Dia', 'Categoria', 'Evento', 'Lugar', 'Fecha_Abreviada', 'Hora']])
                 
-                with st.spinner("Generando imágenes y preparando ZIP..."):
+                with st.spinner("Generando imágenes secuenciales..."):
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     
@@ -386,25 +362,30 @@ if st.button("🔄 Actualizar y Generar Imágenes desde la Web"):
                     
                     zip_buffer = io.BytesIO()
                     
+                    # --- CONTADOR GLOBAL PARA NOMBRADO SECUENCIAL ---
+                    contador_secuencial = 1
+                    
                     with zipfile.ZipFile(zip_buffer, "w") as zf:
                         for i, (fecha, grupo) in enumerate(grupos):
-                            status_text.text(f"Analizando: {fecha}...")
+                            status_text.text(f"Procesando: {fecha}...")
                             
                             paginas = paginar_eventos(grupo)
                             
                             for idx_pag, pagina_data in enumerate(paginas):
                                 img = generar_imagen_en_memoria(fecha, pagina_data, fuentes)
                                 
-                                nombre_base = str(fecha).replace(" ", "_").replace("/", "-")
+                                # Limpieza del nombre de fecha (Ej: "MIE 10" -> "MIE10")
+                                nombre_fecha_limpio = str(fecha).replace(" ", "").replace("/", "").upper()
                                 
-                                if len(paginas) > 1:
-                                    nombre_archivo = f"post_{nombre_base}_{idx_pag + 1}.png"
-                                else:
-                                    nombre_archivo = f"post_{nombre_base}.png"
+                                # Nombrado secuencial: 1-POST-MIE10.png
+                                nombre_archivo = f"{contador_secuencial}-POST-{nombre_fecha_limpio}.png"
                                 
                                 img_bytes = io.BytesIO()
                                 img.save(img_bytes, format='PNG') 
                                 zf.writestr(nombre_archivo, img_bytes.getvalue())
+                                
+                                # Incrementamos contador por cada imagen creada (aunque sea del mismo día)
+                                contador_secuencial += 1
                             
                             progress_bar.progress((i + 1) / total_grupos)
                     
@@ -414,6 +395,6 @@ if st.button("🔄 Actualizar y Generar Imágenes desde la Web"):
                     st.download_button(
                         label="📥 Descargar Imágenes (ZIP)",
                         data=zip_buffer.getvalue(),
-                        file_name="posts_agenda.zip",
+                        file_name="posts_agenda_secuencial.zip",
                         mime="application/zip"
                     )
