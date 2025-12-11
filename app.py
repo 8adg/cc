@@ -13,7 +13,7 @@ from io import StringIO
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Generador de Posts", page_icon="🎨")
 
-st.title("🎨 Generador de Agenda Cultural - Web")
+st.title("C‒C Generador de Agenda Cultural - Web")
 st.markdown("""
 Los datos se extraen automáticamente de la URL de la agenda (usando la estructura de listas HTML). 
 """)
