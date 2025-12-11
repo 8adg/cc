@@ -5,14 +5,17 @@ import os
 import textwrap
 import io
 import zipfile
+import requests
+from bs4 import BeautifulSoup
+import re
+from io import StringIO
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Generador de Posts", page_icon="🎨")
 
-st.title("🎨 Generador de Agenda Cultural")
+st.title("🎨 Generador de Agenda Cultural - Web")
 st.markdown("""
-Sube tu archivo **CSV**. 
-El sistema usará **Ritmo Vertical (Grilla)** y espaciado adaptativo para un diseño impecable.
+Los datos se extraen automáticamente de la URL de la agenda (usando la estructura de listas HTML). 
 """)
 
 # --- CONFIGURACIÓN DISEÑO ---
@@ -25,10 +28,7 @@ COLOR_BLANCO = (255, 255, 255)
 MARGEN_IZQ = 230
 MARGEN_DER = 50
 MARGEN_IZQ_TRAMA = 227 
-
-# Restricción Superior
-MIN_Y_FECHA = 100 
-
+MIN_Y_FECHA = 116 
 MODO_BLENDING = 'lighten'  
 OPACIDAD_TRAMA = 1.0  
 
@@ -37,37 +37,29 @@ LINEA_BASE = 5
 def to_base(val):
     return round(val / LINEA_BASE) * LINEA_BASE
 
-# Saltos internos comunes (múltiplos de la Línea Base)
-SALTO_CATEGORIA = to_base(45)   # 45
-SALTO_INFO = to_base(45)        # 45
-MARGIN_POST_TITULO = to_base(15)# 15
-SALTO_TITULO_LINEA = to_base(70) # 70 (Altura de línea de la fuente 65px)
-SALTO_INFO_CUANDO = to_base(35) # 35 (Altura de la fuente 35px)
+SALTO_CATEGORIA = to_base(45)
+SALTO_INFO = to_base(45)
+MARGIN_POST_TITULO = to_base(15)
+SALTO_TITULO_LINEA = to_base(70)
+SALTO_INFO_CUANDO = to_base(35)
 
-# MODO COMFORT (Para 1, 2 o 3 eventos) - Valores originales, ajustados a LINEA_BASE
 CFG_COMFORT = {
-    "ESPACIO_ENTRE_EVENTOS": to_base(90),   # 90
-    "DISTANCIA_LINEA_EVENTOS": to_base(60), # 60
-    "DISTANCIA_FECHA_LINEA": to_base(80),   # 80
-    "MARGEN_INFERIOR_CANVAS": to_base(100)  # 100
+    "ESPACIO_ENTRE_EVENTOS": to_base(90), "DISTANCIA_LINEA_EVENTOS": to_base(60),
+    "DISTANCIA_FECHA_LINEA": to_base(80), "MARGEN_INFERIOR_CANVAS": to_base(100)
 }
-
-# MODO COMPACTO (Para 4 eventos) - Valores compactos, ajustados a LINEA_BASE
 CFG_COMPACT = {
-    "ESPACIO_ENTRE_EVENTOS": to_base(65),   # 65
-    "DISTANCIA_LINEA_EVENTOS": to_base(50), # 50
-    "DISTANCIA_FECHA_LINEA": to_base(70),   # 70
-    "MARGEN_INFERIOR_CANVAS": to_base(85)   # 85
+    "ESPACIO_ENTRE_EVENTOS": to_base(65), "DISTANCIA_LINEA_EVENTOS": to_base(50),
+    "DISTANCIA_FECHA_LINEA": to_base(70), "MARGEN_INFERIOR_CANVAS": to_base(85)
 }
 
-# --- FUNCIONES ---
+# --- FUNCIONES DE FUENTES Y DIBUJO ---
+# (Se mantienen todas las funciones de dibujo, cálculo de altura, y paginación)
 
 def obtener_fuente(ruta_preferida, tamaño):
-    try:
-        return ImageFont.truetype(ruta_preferida, tamaño)
-    except IOError:
-        return ImageFont.load_default()
+    try: return ImageFont.truetype(ruta_preferida, tamaño)
+    except IOError: return ImageFont.load_default()
 
+@st.cache_resource
 def cargar_fuentes():
     return {
         "titulo":      obtener_fuente("assets/Archivo-Bold.ttf", 65),
@@ -79,24 +71,17 @@ def cargar_fuentes():
     }
 
 def calcular_altura_evento(fila, cfg):
-    """ Calcula la altura exacta que ocupará un evento, usando la CFG elegida. """
     altura_acumulada = 0
     altura_acumulada += SALTO_CATEGORIA
-    
     titulo = str(fila['Evento']).upper()
     lineas_titulo = textwrap.wrap(titulo, width=18)
-    
-    # Altura de Título (Saltos y margen post título)
     altura_acumulada += (len(lineas_titulo) * SALTO_TITULO_LINEA) + MARGIN_POST_TITULO
-    
-    altura_acumulada += SALTO_INFO # Lugar
-    altura_acumulada += SALTO_INFO_CUANDO # Cuándo
+    altura_acumulada += SALTO_INFO
+    altura_acumulada += SALTO_INFO_CUANDO
     return altura_acumulada
 
 def paginar_eventos(grupo_eventos):
-    # Usamos configuración compacta para el cálculo de capacidad máxima (permisiva)
     cfg = CFG_COMPACT 
-    
     altura_header = MIN_Y_FECHA + cfg["DISTANCIA_FECHA_LINEA"] + cfg["DISTANCIA_LINEA_EVENTOS"]
     altura_footer = ALTO - cfg["MARGEN_INFERIOR_CANVAS"]
     max_altura_disponible = altura_footer - altura_header
@@ -106,38 +91,27 @@ def paginar_eventos(grupo_eventos):
     altura_actual = 0
     
     for index, fila in grupo_eventos.iterrows():
-        # Usamos la CFG Compacta para ver si el evento entra en el espacio máximo
         h_evento = calcular_altura_evento(fila, cfg)
-        
         espacio_necesario = h_evento
-        if len(pagina_actual) > 0:
-            espacio_necesario += cfg["ESPACIO_ENTRE_EVENTOS"]
+        if len(pagina_actual) > 0: espacio_necesario += cfg["ESPACIO_ENTRE_EVENTOS"]
             
         if (altura_actual + espacio_necesario) <= max_altura_disponible:
             pagina_actual.append(fila)
             altura_actual += espacio_necesario
         else:
-            if pagina_actual: 
-                paginas.append(pd.DataFrame(pagina_actual))
-            
+            if pagina_actual: paginas.append(pd.DataFrame(pagina_actual))
             pagina_actual = [fila]
             altura_actual = h_evento
             
-    if pagina_actual:
-        paginas.append(pd.DataFrame(pagina_actual))
-        
+    if pagina_actual: paginas.append(pd.DataFrame(pagina_actual))
     return paginas
 
 def dibujar_evento(draw, y_pos, fila, fuentes, cfg):
-    """ Dibuja el evento, usando la CFG elegida. """
-    y_pos = to_base(y_pos) # Forzamos alineación al inicio de un bloque
-    
-    # 1. CATEGORÍA
+    y_pos = to_base(y_pos)
     cat_texto = f"—{str(fila['Categoria']).upper()}"
     draw.text((MARGEN_IZQ, y_pos), cat_texto, font=fuentes["categoria"], fill=COLOR_BLANCO)
     y_pos += SALTO_CATEGORIA
 
-    # 2. TÍTULO
     titulo = str(fila['Evento']).upper()
     lineas_titulo = textwrap.wrap(titulo, width=18) 
     for linea in lineas_titulo:
@@ -145,17 +119,13 @@ def dibujar_evento(draw, y_pos, fila, fuentes, cfg):
         y_pos += SALTO_TITULO_LINEA 
     y_pos += MARGIN_POST_TITULO
 
-    # 3. LUGAR
     lugar_texto = f"Lugar: {fila['Lugar']}"
-    if len(lugar_texto) > 80: lugar_texto = lugar_texto[:77] + "..."
+    if len(lugar_texto) > 40: lugar_texto = lugar_texto[:37] + "..."
     draw.text((MARGEN_IZQ, y_pos), lugar_texto, font=fuentes["info"], fill=COLOR_AZUL)
     y_pos += SALTO_INFO
 
-    # 4. CUÁNDO
     cuando_texto = f"Cuándo: {fila['Fecha_Abreviada']} — {fila['Hora']}"
     draw.text((MARGEN_IZQ, y_pos), cuando_texto, font=fuentes["info_bold"], fill=COLOR_AZUL)
-    # y_pos += SALTO_INFO_CUANDO (No hace falta sumar, es el último elemento del bloque)
-    
     return y_pos
 
 def aplicar_blending(fondo, capa_superior, modo):
@@ -178,7 +148,6 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
 
     cantidad_eventos = len(items_para_calcular)
 
-    # --- SELECCIÓN DINÁMICA DE CONFIGURACIÓN ---
     if cantidad_eventos >= 4:
         cfg = CFG_COMPACT
         mostrar_trama = False
@@ -198,12 +167,11 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     y_linea = y_inicio_eventos - cfg["DISTANCIA_LINEA_EVENTOS"]
     y_fecha = y_linea - cfg["DISTANCIA_FECHA_LINEA"]
     
-    # RESTRICCIÓN DE SEGURIDAD (Alinea todo a la línea base)
     y_fecha = to_base(y_fecha)
     y_linea = to_base(y_linea)
     y_inicio_eventos = to_base(y_inicio_eventos)
 
-    if y_fecha < MIN_Y_FECHA: # Si después del to_base sigue estando muy alto, lo forzamos
+    if y_fecha < MIN_Y_FECHA:
         diferencia = MIN_Y_FECHA - y_fecha
         y_fecha = MIN_Y_FECHA
         y_linea = to_base(y_linea + diferencia)
@@ -211,14 +179,12 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
 
     # 2. TRAMA
     limite_trama = int(y_fecha - 10) 
-
     if mostrar_trama and os.path.exists("assets/trama.png") and limite_trama > 0:
         try:
             tira = Image.open("assets/trama.png").convert("RGBA")
             if OPACIDAD_TRAMA < 1.0:
                 alpha = tira.split()[3].point(lambda i: i * OPACIDAD_TRAMA)
                 tira.putalpha(alpha)
-
             ancho_util_trama = ANCHO - MARGEN_IZQ_TRAMA
             ratio = ancho_util_trama / tira.width
             alto_tira = int(tira.height * ratio)
@@ -265,71 +231,185 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     y_cursor = y_inicio_eventos
     for fila in items_para_calcular:
         y_fin = dibujar_evento(draw, y_cursor, fila, fuentes, cfg)
-        y_cursor = y_fin + cfg["ESPACIO_ENTRE_EVENTOS"] 
+        y_cursor = y_fin + cfg["ESPACIO_ENTRE_EVENTOS"]
     
     return img
 
-# --- LÓGICA DE LA INTERFAZ ---
+# --- FUNCIONES DE SCRAPING Y PROCESAMIENTO (Ajuste a Estructura HTML) ---
 
-uploaded_file = st.file_uploader("Arrastra tu CSV aquí", type=["csv"])
-
-if uploaded_file is not None:
+@st.cache_data
+def obtener_texto_agenda(url, clase_contenedor):
+    """ 
+    Descarga el contenido, encuentra el contenedor, e itera sobre <li> para
+    obtener bloques de texto de evento.
+    """
     try:
-        try:
-            df = pd.read_csv(uploaded_file, encoding='utf-8', dtype=str)
-        except UnicodeDecodeError:
-            df = pd.read_csv(uploaded_file, encoding='latin-1', dtype=str)
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser')
         
-        df.fillna("", inplace=True)
-        df.columns = df.columns.str.strip()
-
-        if 'Fecha_Abreviada' not in df.columns:
-            st.error("❌ El CSV no tiene la columna 'Fecha_Abreviada'. Revisa el formato.")
-        else:
-            st.success(f"✅ Archivo cargado. {len(df)} eventos detectados.")
+        contenedor = soup.find('div', class_=clase_contenedor)
+        
+        if contenedor:
+            eventos_en_bruto = []
+            dias_semana_base = ["LUNES", "MARTES", "MIÉRCOLES", "JUEVES", "VIERNES", "SÁBADO", "DOMINGO"]
+            dia_actual = None
             
-            if st.button("🚀 Generar Imágenes"):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                fuentes = cargar_fuentes()
+            # 1. Encontrar todos los encabezados de DÍA (H2, H3, etc.)
+            for tag in contenedor.find_all(['h2', 'h3', 'h4', 'p', 'li']):
+                texto_limpio = tag.get_text(strip=True).upper()
                 
-                grupos = df.groupby('Fecha_Abreviada', sort=False)
-                total_grupos = len(grupos)
+                # 2. Detectar encabezado de día y actualizar el día actual
+                es_dia = False
+                for dia_base in dias_semana_base:
+                    if texto_limpio.startswith(dia_base):
+                        dia_actual = dia_base # Guarda el día base
+                        es_dia = True
+                        break
                 
-                zip_buffer = io.BytesIO()
-                
-                with zipfile.ZipFile(zip_buffer, "w") as zf:
-                    for i, (fecha, grupo) in enumerate(grupos):
-                        status_text.text(f"Analizando: {fecha}...")
+                # 3. Procesar LI (asumimos que LI son los eventos)
+                if tag.name == 'li' and dia_actual:
+                    # Sustituimos <br> y </p> por un separador fuerte que no esté en los datos
+                    # Usamos `_SEP_` como separador
+                    
+                    # 1. Quitamos negritas y cursivas para no romper la estructura de texto
+                    for strong in tag.find_all(['strong', 'em']):
+                        strong.unwrap()
                         
-                        # PAGINACIÓN
-                        paginas = paginar_eventos(grupo)
-                        
-                        for idx_pag, pagina_data in enumerate(paginas):
-                            img = generar_imagen_en_memoria(fecha, pagina_data, fuentes)
-                            
-                            nombre_base = str(fecha).replace(" ", "_").replace("/", "-")
-                            
-                            if len(paginas) > 1:
-                                nombre_archivo = f"post_{nombre_base}_{idx_pag + 1}.png"
-                            else:
-                                nombre_archivo = f"post_{nombre_base}.png"
-                            
-                            img_bytes = io.BytesIO()
-                            img.save(img_bytes, format='PNG')
-                            zf.writestr(nombre_archivo, img_bytes.getvalue())
-                        
-                        progress_bar.progress((i + 1) / total_grupos)
-                
-                status_text.text("¡Listo! Imágenes generadas.")
-                progress_bar.empty()
-                
-                st.download_button(
-                    label="📥 Descargar Imágenes (ZIP)",
-                    data=zip_buffer.getvalue(),
-                    file_name="posts_instagram.zip",
-                    mime="application/zip"
-                )
+                    # 2. Usamos el separador \t para la división de líneas
+                    lineas_li = tag.get_text(separator='\t', strip=True).split('\t')
+                    
+                    # 3. Limpiamos y eliminamos vacíos. Deberían ser 4 líneas (Cat|Ev, Lugar, Hora, Info)
+                    lineas_evento = [l.strip() for l in lineas_li if l.strip()]
 
+                    if len(lineas_evento) >= 3: # Mínimo 3 líneas: Título, Lugar, Hora
+                        eventos_en_bruto.append({
+                            'Dia': dia_actual,
+                            'Bloque': lineas_evento # Guardamos el bloque de 3 o 4 líneas
+                        })
+            
+            return eventos_en_bruto # Retorna una lista de dicts ya pre-procesada
+            
+        else:
+            return f"ERROR: No se encontró el contenedor con la clase '{clase_contenedor}'."
+            
+    except requests.exceptions.RequestException as e:
+        return f"ERROR de conexión: {e}"
     except Exception as e:
-        st.error(f"Ocurrió un error: {e}")
+        return f"ERROR desconocido al procesar la página: {e}"
+
+
+def texto_a_dataframe(datos_pre_procesados):
+    """ Procesa la lista de bloques de evento (ya pre-formateada) a DataFrame. """
+    eventos_procesados = []
+    
+    if isinstance(datos_pre_procesados, str) or not datos_pre_procesados:
+        return pd.DataFrame()
+
+    for item in datos_pre_procesados:
+        bloque = item['Bloque']
+        dia_base = item['Dia']
+        
+        try:
+            # Línea 1: CATEGORIA | EVENTO
+            partes_evento = bloque[0].split('|', 1)
+            categoria = partes_evento[0].strip()
+            nombre_evento = partes_evento[1].strip() if len(partes_evento) > 1 else "Sin Título"
+
+            # Línea 2: LUGAR
+            lugar = bloque[1].strip()
+
+            # Línea 3: FECHA_ABREVIADA – HORA
+            partes_fecha_hora = re.split(r'\s*–\s*|\s*-\s*', bloque[2], 1)
+            fecha_abreviada = partes_fecha_hora[0].strip()
+            hora = partes_fecha_hora[1].strip() if len(partes_fecha_hora) > 1 else "N/A"
+
+            # Obtenemos el nombre del día final (Ej: Miércoles)
+            dia_final = ""
+            if fecha_abreviada.upper().startswith('MIER'): dia_final = 'Miércoles'
+            elif fecha_abreviada.upper().startswith('JUEV'): dia_final = 'Jueves'
+            elif fecha_abreviada.upper().startswith('VIER'): dia_final = 'Viernes'
+            elif fecha_abreviada.upper().startswith('SAB'): dia_final = 'Sábado'
+            elif fecha_abreviada.upper().startswith('DOM'): dia_final = 'Domingo'
+            else: dia_final = dia_base.capitalize() # Fallback al día encontrado en el encabezado
+            
+            eventos_procesados.append({
+                'Dia': dia_final,
+                'Categoria': categoria,
+                'Evento': nombre_evento,
+                'Lugar': lugar,
+                'Fecha_Abreviada': fecha_abreviada,
+                'Hora': hora,
+            })
+        
+        except Exception:
+            continue
+
+    return pd.DataFrame(eventos_procesados)
+
+
+# --- LÓGICA DE LA INTERFAZ (Principal) ---
+
+AGENDA_URL = "https://portaluniversidad.org.ar/agenda-cultural/"
+CONTENEDOR_CLASE = "entry themeform"
+
+if st.button("🔄 Actualizar y Generar Imágenes desde la Web"):
+    with st.spinner("Conectando a la web y procesando datos..."):
+        
+        # 1. OBTENER DATOS HTML PRE-PROCESADOS
+        datos_en_bruto = obtener_texto_agenda(AGENDA_URL, CONTENEDOR_CLASE)
+
+        if isinstance(datos_en_bruto, str) and datos_en_bruto.startswith("ERROR"):
+            st.error(datos_en_bruto)
+        else:
+            # 2. CONVERTIR A DATAFRAME
+            df = texto_a_dataframe(datos_en_bruto)
+
+            if df.empty:
+                st.warning("⚠️ No se encontraron eventos. Verifica la URL y la clase del contenedor.")
+            else:
+                st.success(f"✅ Agenda procesada: {len(df)} eventos listos.")
+                st.dataframe(df[['Dia', 'Categoria', 'Evento', 'Lugar', 'Fecha_Abreviada', 'Hora']])
+                
+                # 3. GENERAR IMÁGENES
+                with st.spinner("Generando imágenes y preparando ZIP..."):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    fuentes = cargar_fuentes()
+                    grupos = df.groupby('Fecha_Abreviada', sort=False)
+                    total_grupos = len(grupos)
+                    
+                    zip_buffer = io.BytesIO()
+                    
+                    with zipfile.ZipFile(zip_buffer, "w") as zf:
+                        for i, (fecha, grupo) in enumerate(grupos):
+                            status_text.text(f"Analizando: {fecha}...")
+                            
+                            paginas = paginar_eventos(grupo)
+                            
+                            for idx_pag, pagina_data in enumerate(paginas):
+                                img = generar_imagen_en_memoria(fecha, pagina_data, fuentes)
+                                
+                                nombre_base = str(fecha).replace(" ", "_").replace("/", "-")
+                                
+                                if len(paginas) > 1:
+                                    nombre_archivo = f"post_{nombre_base}_{idx_pag + 1}.png"
+                                else:
+                                    nombre_archivo = f"post_{nombre_base}.png"
+                                
+                                img_bytes = io.BytesIO()
+                                img.save(img_bytes, format='PNG') 
+                                zf.writestr(nombre_archivo, img_bytes.getvalue())
+                            
+                            progress_bar.progress((i + 1) / total_grupos)
+                    
+                    status_text.text("¡Listo! Imágenes generadas.")
+                    progress_bar.empty()
+                    
+                    st.download_button(
+                        label="📥 Descargar Imágenes (ZIP)",
+                        data=zip_buffer.getvalue(),
+                        file_name="posts_agenda.zip",
+                        mime="application/zip"
+                    )
