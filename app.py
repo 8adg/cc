@@ -53,8 +53,6 @@ CFG_COMPACT = {
 }
 
 # --- FUNCIONES DE FUENTES Y DIBUJO ---
-# (Se mantienen todas las funciones de dibujo, cálculo de altura, y paginación)
-
 def obtener_fuente(ruta_preferida, tamaño):
     try: return ImageFont.truetype(ruta_preferida, tamaño)
     except IOError: return ImageFont.load_default()
@@ -256,7 +254,8 @@ def obtener_texto_agenda(url, clase_contenedor):
             dia_actual = None
             
             # 1. Encontrar todos los encabezados de DÍA (H2, H3, etc.)
-            for tag in contenedor.find_all(['h2', 'h3', 'h4', 'p', 'li']):
+            for tag in contenedor.find_all(['h2', 'h3', 'h4', 'p', 'ul', 'li']): # Incluimos UL para el contexto
+                
                 texto_limpio = tag.get_text(strip=True).upper()
                 
                 # 2. Detectar encabezado de día y actualizar el día actual
@@ -269,26 +268,29 @@ def obtener_texto_agenda(url, clase_contenedor):
                 
                 # 3. Procesar LI (asumimos que LI son los eventos)
                 if tag.name == 'li' and dia_actual:
-                    # Sustituimos <br> y </p> por un separador fuerte que no esté en los datos
-                    # Usamos `_SEP_` como separador
-                    
-                    # 1. Quitamos negritas y cursivas para no romper la estructura de texto
-                    for strong in tag.find_all(['strong', 'em']):
-                        strong.unwrap()
+                    # Quitamos etiquetas de formato (strong, em) para limpiar el texto
+                    for fmt_tag in tag.find_all(['strong', 'em', 'a', 'br']):
+                         if fmt_tag.name == 'br':
+                             # Sustituir <br> por un separador fuerte que luego usaremos
+                             fmt_tag.replace_with(' _SEP_ ') 
+                         else:
+                            # Mantener el texto, pero eliminar el tag (ej: <strong>Texto</strong> -> Texto)
+                            fmt_tag.unwrap()
                         
-                    # 2. Usamos el separador \t para la división de líneas
-                    lineas_li = tag.get_text(separator='\t', strip=True).split('\t')
+                    # Obtenemos el texto limpio y lo dividimos por el separador
+                    lineas_evento = tag.get_text(separator=' ', strip=True).split(' _SEP_ ')
                     
-                    # 3. Limpiamos y eliminamos vacíos. Deberían ser 4 líneas (Cat|Ev, Lugar, Hora, Info)
-                    lineas_evento = [l.strip() for l in lineas_li if l.strip()]
+                    # Limpiamos y eliminamos vacíos. Deberían ser 4 líneas (Cat|Ev, Lugar, Hora, Info)
+                    lineas_evento = [l.strip() for l in lineas_evento if l.strip()]
 
-                    if len(lineas_evento) >= 3: # Mínimo 3 líneas: Título, Lugar, Hora
+                    # Verificamos que tengamos al menos Título, Lugar y Hora/Info
+                    if len(lineas_evento) >= 3:
                         eventos_en_bruto.append({
                             'Dia': dia_actual,
-                            'Bloque': lineas_evento # Guardamos el bloque de 3 o 4 líneas
+                            'Bloque': lineas_evento 
                         })
             
-            return eventos_en_bruto # Retorna una lista de dicts ya pre-procesada
+            return eventos_en_bruto
             
         else:
             return f"ERROR: No se encontró el contenedor con la clase '{clase_contenedor}'."
@@ -316,8 +318,13 @@ def texto_a_dataframe(datos_pre_procesados):
             categoria = partes_evento[0].strip()
             nombre_evento = partes_evento[1].strip() if len(partes_evento) > 1 else "Sin Título"
 
-            # Línea 2: LUGAR
-            lugar = bloque[1].strip()
+            # Línea 2: LUGAR (Aplicamos la limpieza de paréntesis aquí)
+            lugar_sucio = bloque[1].strip()
+            # ----------------------------------------------------------------------------------
+            # AJUSTE PRINCIPAL: Eliminar contenido entre paréntesis
+            lugar = re.sub(r'\s*\([^)]*\)', '', lugar_sucio).strip() 
+            # ----------------------------------------------------------------------------------
+
 
             # Línea 3: FECHA_ABREVIADA – HORA
             partes_fecha_hora = re.split(r'\s*–\s*|\s*-\s*', bloque[2], 1)
@@ -331,7 +338,7 @@ def texto_a_dataframe(datos_pre_procesados):
             elif fecha_abreviada.upper().startswith('VIER'): dia_final = 'Viernes'
             elif fecha_abreviada.upper().startswith('SAB'): dia_final = 'Sábado'
             elif fecha_abreviada.upper().startswith('DOM'): dia_final = 'Domingo'
-            else: dia_final = dia_base.capitalize() # Fallback al día encontrado en el encabezado
+            else: dia_final = dia_base.capitalize()
             
             eventos_procesados.append({
                 'Dia': dia_final,
@@ -356,22 +363,19 @@ CONTENEDOR_CLASE = "entry themeform"
 if st.button("🔄 Actualizar y Generar Imágenes desde la Web"):
     with st.spinner("Conectando a la web y procesando datos..."):
         
-        # 1. OBTENER DATOS HTML PRE-PROCESADOS
         datos_en_bruto = obtener_texto_agenda(AGENDA_URL, CONTENEDOR_CLASE)
 
         if isinstance(datos_en_bruto, str) and datos_en_bruto.startswith("ERROR"):
             st.error(datos_en_bruto)
         else:
-            # 2. CONVERTIR A DATAFRAME
             df = texto_a_dataframe(datos_en_bruto)
 
             if df.empty:
-                st.warning("⚠️ No se encontraron eventos. Verifica la URL y la clase del contenedor.")
+                st.warning("⚠️ No se encontraron eventos en el texto extraído. Verifica la URL y la clase del contenedor.")
             else:
                 st.success(f"✅ Agenda procesada: {len(df)} eventos listos.")
                 st.dataframe(df[['Dia', 'Categoria', 'Evento', 'Lugar', 'Fecha_Abreviada', 'Hora']])
                 
-                # 3. GENERAR IMÁGENES
                 with st.spinner("Generando imágenes y preparando ZIP..."):
                     progress_bar = st.progress(0)
                     status_text = st.empty()
