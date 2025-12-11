@@ -10,63 +10,94 @@ from bs4 import BeautifulSoup
 import re
 from io import StringIO
 
-# --- CONFIGURACIÓN DE PÁGINA ---
+# --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Generador de Posts", page_icon="🎨")
-
 st.title("C‒C Generador de Agenda Cultural")
-st.markdown("""
-Los datos se extraen automáticamente de la web y se generan las imágenes **numeradas secuencialmente** para ordenar tu feed.
-""")
+st.markdown("Generación automática de imágenes secuenciales desde la web o CSV.")
 
-# --- CONFIGURACIÓN DISEÑO ---
+# ==============================================================================
+# 2. VARIABLES CRÍTICAS (NO BORRAR NI MOVER)
+# ==============================================================================
+AGENDA_URL = "https://portaluniversidad.org.ar/agenda-cultural/"
+CONTENEDOR_CLASE = "entry themeform"
+
+# --- CONFIGURACIÓN GLOBAL BASE ---
 ANCHO = 1080
 ALTO = 1350
 COLOR_FONDO = (242, 101, 50)
 COLOR_AZUL = (14, 46, 120)
 COLOR_BLANCO = (255, 255, 255)
 
+# ==============================================================================
+# 3. CONFIGURACIÓN DEL DISEÑO (PEGAR AQUÍ DATOS DEL CALIBRADOR)
+# ==============================================================================
+
+# 1. CONFIGURACIÓN TRAMA
+MODO_BLENDING = 'lighten'
+OPACIDAD_TRAMA = 1.0
+MARGEN_IZQ_TRAMA = 227
+OFFSET_TRAMA_Y = 10 # Valor default si no se encuentra en cfg (fallback)
+
+# 2. GEOMETRÍA GLOBAL
 MARGEN_IZQ = 230
 MARGEN_DER = 50
-MARGEN_IZQ_TRAMA = 227 
-MIN_Y_FECHA = 116 
-MODO_BLENDING = 'lighten'  
-OPACIDAD_TRAMA = 1.0  
+MIN_Y_FECHA = 110
+POSICION_Y_SIDEBAR = 900
 
-# --- MÓDULO DE LÍNEA BASE (Ritmo Vertical) ---
+# 3. FUENTES (TAMAÑOS)
+SIZE_TITULO = 65
+SIZE_FECHA = 60
+SIZE_CAT = 30
+SIZE_INFO = 35
+SIZE_SIDEBAR = 50
+
+# 4. INTERLINEADO INTERNO
+SALTO_CATEGORIA = 45
+SALTO_TITULO_LINEA = 70
+MARGIN_POST_TITULO = 15
+SALTO_INFO = 45
+SALTO_INFO_CUANDO = 35
+
+# 5. TEMPLATES
+CFG_COMFORT = {
+    "ESPACIO_ENTRE_EVENTOS": 90,
+    "DISTANCIA_LINEA_EVENTOS": 60,
+    "DISTANCIA_FECHA_LINEA": 80,
+    "MARGEN_INFERIOR_CANVAS": 100,
+    "OFFSET_TRAMA": 10
+}
+
+CFG_COMPACT = {
+    "ESPACIO_ENTRE_EVENTOS": 65,
+    "DISTANCIA_LINEA_EVENTOS": 50,
+    "DISTANCIA_FECHA_LINEA": 70,
+    "MARGEN_INFERIOR_CANVAS": 85,
+    "OFFSET_TRAMA": 0
+}
+# ==============================================================================
+
+# --- 4. UTILS RITMO VERTICAL ---
 LINEA_BASE = 5 
 def to_base(val):
     return round(val / LINEA_BASE) * LINEA_BASE
 
-SALTO_CATEGORIA = to_base(45)
-SALTO_INFO = to_base(45)
-MARGIN_POST_TITULO = to_base(15)
-SALTO_TITULO_LINEA = to_base(70)
-SALTO_INFO_CUANDO = to_base(35)
-
-CFG_COMFORT = {
-    "ESPACIO_ENTRE_EVENTOS": to_base(90), "DISTANCIA_LINEA_EVENTOS": to_base(60),
-    "DISTANCIA_FECHA_LINEA": to_base(80), "MARGEN_INFERIOR_CANVAS": to_base(100)
-}
-CFG_COMPACT = {
-    "ESPACIO_ENTRE_EVENTOS": to_base(65), "DISTANCIA_LINEA_EVENTOS": to_base(50),
-    "DISTANCIA_FECHA_LINEA": to_base(70), "MARGEN_INFERIOR_CANVAS": to_base(85)
-}
-
-# --- FUNCIONES DE FUENTES Y DIBUJO ---
+# --- 5. FUNCIONES DE FUENTES ---
 def obtener_fuente(ruta_preferida, tamaño):
-    try: return ImageFont.truetype(ruta_preferida, tamaño)
+    try: return ImageFont.truetype(ruta_preferida, int(tamaño))
     except IOError: return ImageFont.load_default()
 
 @st.cache_resource
 def cargar_fuentes():
     return {
-        "titulo":      obtener_fuente("assets/Archivo-Bold.ttf", 65),
-        "fecha_header":obtener_fuente("assets/ArchivoBlack-Regular.ttf", 60),
-        "categoria":   obtener_fuente("assets/Archivo-Bold.ttf", 30),
-        "info":        obtener_fuente("assets/Archivo-Regular.ttf", 35),
-        "info_bold":   obtener_fuente("assets/Archivo-Bold.ttf", 35),
-        "sidebar":     obtener_fuente("assets/Coolvetica Rg.otf", 50) 
+        "titulo":      obtener_fuente("assets/Archivo-Bold.ttf", SIZE_TITULO),
+        "fecha_header":obtener_fuente("assets/ArchivoBlack-Regular.ttf", SIZE_FECHA),
+        "categoria":   obtener_fuente("assets/Archivo-Bold.ttf", SIZE_CAT),
+        "info":        obtener_fuente("assets/Archivo-Regular.ttf", SIZE_INFO),
+        "info_bold":   obtener_fuente("assets/Archivo-Bold.ttf", SIZE_INFO),
+        "sidebar":     obtener_fuente("assets/Coolvetica Rg.otf", SIZE_SIDEBAR) 
     }
+
+# --- 6. LÓGICA DE DIBUJO ---
 
 def calcular_altura_evento(fila, cfg):
     altura_acumulada = 0
@@ -91,7 +122,8 @@ def paginar_eventos(grupo_eventos):
     for index, fila in grupo_eventos.iterrows():
         h_evento = calcular_altura_evento(fila, cfg)
         espacio_necesario = h_evento
-        if len(pagina_actual) > 0: espacio_necesario += cfg["ESPACIO_ENTRE_EVENTOS"]
+        if len(pagina_actual) > 0: 
+            espacio_necesario += cfg["ESPACIO_ENTRE_EVENTOS"]
             
         if (altura_actual + espacio_necesario) <= max_altura_disponible:
             pagina_actual.append(fila)
@@ -105,7 +137,7 @@ def paginar_eventos(grupo_eventos):
     return paginas
 
 def dibujar_evento(draw, y_pos, fila, fuentes, cfg):
-    y_pos = to_base(y_pos)
+    y_pos = to_base(y_pos) 
     cat_texto = f"—{str(fila['Categoria']).upper()}"
     draw.text((MARGEN_IZQ, y_pos), cat_texto, font=fuentes["categoria"], fill=COLOR_BLANCO)
     y_pos += SALTO_CATEGORIA
@@ -146,12 +178,11 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
 
     cantidad_eventos = len(items_para_calcular)
 
+    # Selección de Template
     if cantidad_eventos >= 4:
         cfg = CFG_COMPACT
-        mostrar_trama = False
     else:
         cfg = CFG_COMFORT
-        mostrar_trama = True
 
     # 1. CÁLCULO BOTTOM-UP
     altura_total_contenido = 0
@@ -176,8 +207,10 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
         y_inicio_eventos = to_base(y_inicio_eventos + diferencia)
 
     # 2. TRAMA
-    limite_trama = int(y_fecha - 10) 
-    if mostrar_trama and os.path.exists("assets/trama.png") and limite_trama > 0:
+    offset = cfg.get("OFFSET_TRAMA", 10) # Usa el offset del config, o 10 por defecto
+    limite_trama = int(y_fecha - offset) 
+    
+    if os.path.exists("assets/trama.png") and limite_trama > 0:
         try:
             tira = Image.open("assets/trama.png").convert("RGBA")
             if OPACIDAD_TRAMA < 1.0:
@@ -194,7 +227,7 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
                 capa_trama.paste(tira, (MARGEN_IZQ_TRAMA, y_pegado), tira)
                 y_pegado -= alto_tira
 
-            if MODO_BLENDING:
+            if MODO_BLENDING and MODO_BLENDING != 'normal':
                 fondo_zona = img.crop((0, 0, ANCHO, limite_trama))
                 zona_mezclada = aplicar_blending(fondo_zona, capa_trama, MODO_BLENDING)
                 img.paste(zona_mezclada, (0, 0))
@@ -209,7 +242,7 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     d_txt = ImageDraw.Draw(capa_txt)
     d_txt.text((0, 0), txt_sidebar, font=fuentes["sidebar"], fill=COLOR_AZUL)
     rotado = capa_txt.rotate(90, expand=1)
-    img.paste(rotado, (82, ALTO - 900), rotado)
+    img.paste(rotado, (82, ALTO - POSICION_Y_SIDEBAR), rotado)
 
     if os.path.exists("assets/logo.png"):
         try:
@@ -233,168 +266,118 @@ def generar_imagen_en_memoria(fecha_key, datos_grupo, fuentes):
     
     return img
 
-# --- FUNCIONES DE SCRAPING Y PROCESAMIENTO ---
-
+# --- 7. FUNCIONES DE SCRAPING ---
 @st.cache_data
 def obtener_texto_agenda(url, clase_contenedor):
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
-        
         contenedor = soup.find('div', class_=clase_contenedor)
-        
         if contenedor:
             eventos_en_bruto = []
             dias_semana_base = ["LUNES", "MARTES", "MIÉRCOLES", "JUEVES", "VIERNES", "SÁBADO", "DOMINGO"]
             dia_actual = None
-            
             for tag in contenedor.find_all(['h2', 'h3', 'h4', 'p', 'ul', 'li']):
                 texto_limpio = tag.get_text(strip=True).upper()
-                
-                es_dia = False
                 for dia_base in dias_semana_base:
                     if texto_limpio.startswith(dia_base):
                         dia_actual = dia_base 
-                        es_dia = True
                         break
-                
                 if tag.name == 'li' and dia_actual:
                     for fmt_tag in tag.find_all(['strong', 'em', 'a', 'br']):
-                         if fmt_tag.name == 'br':
-                             fmt_tag.replace_with(' _SEP_ ') 
-                         else:
-                            fmt_tag.unwrap()
-                        
+                         if fmt_tag.name == 'br': fmt_tag.replace_with(' _SEP_ ') 
+                         else: fmt_tag.unwrap()
                     lineas_evento = tag.get_text(separator=' ', strip=True).split(' _SEP_ ')
                     lineas_evento = [l.strip() for l in lineas_evento if l.strip()]
-
                     if len(lineas_evento) >= 3:
-                        eventos_en_bruto.append({
-                            'Dia': dia_actual,
-                            'Bloque': lineas_evento 
-                        })
-            
+                        eventos_en_bruto.append({'Dia': dia_actual, 'Bloque': lineas_evento})
             return eventos_en_bruto
-        else:
-            return f"ERROR: No se encontró el contenedor con la clase '{clase_contenedor}'."
-    except requests.exceptions.RequestException as e:
-        return f"ERROR de conexión: {e}"
-    except Exception as e:
-        return f"ERROR desconocido al procesar la página: {e}"
+        else: return f"ERROR: Clase '{clase_contenedor}' no encontrada."
+    except Exception as e: return f"ERROR: {e}"
 
 def texto_a_dataframe(datos_pre_procesados):
     eventos_procesados = []
-    
-    if isinstance(datos_pre_procesados, str) or not datos_pre_procesados:
-        return pd.DataFrame()
-
+    if isinstance(datos_pre_procesados, str) or not datos_pre_procesados: return pd.DataFrame()
     for item in datos_pre_procesados:
         bloque = item['Bloque']
-        dia_base = item['Dia']
-        
         try:
-            # Línea 1
             partes_evento = bloque[0].split('|', 1)
             categoria = partes_evento[0].strip()
             nombre_evento = partes_evento[1].strip() if len(partes_evento) > 1 else "Sin Título"
-
-            # Línea 2: Limpieza de paréntesis
-            lugar_sucio = bloque[1].strip()
-            lugar = re.sub(r'\s*\([^)]*\)', '', lugar_sucio).strip() 
-
-            # Línea 3
+            lugar = re.sub(r'\s*\([^)]*\)', '', bloque[1].strip()).strip() 
             partes_fecha_hora = re.split(r'\s*–\s*|\s*-\s*', bloque[2], 1)
             fecha_abreviada = partes_fecha_hora[0].strip()
             hora = partes_fecha_hora[1].strip() if len(partes_fecha_hora) > 1 else "N/A"
-
-            dia_final = ""
-            if fecha_abreviada.upper().startswith('MIER'): dia_final = 'Miércoles'
-            elif fecha_abreviada.upper().startswith('JUEV'): dia_final = 'Jueves'
-            elif fecha_abreviada.upper().startswith('VIER'): dia_final = 'Viernes'
-            elif fecha_abreviada.upper().startswith('SAB'): dia_final = 'Sábado'
-            elif fecha_abreviada.upper().startswith('DOM'): dia_final = 'Domingo'
-            else: dia_final = dia_base.capitalize()
-            
             eventos_procesados.append({
-                'Dia': dia_final,
-                'Categoria': categoria,
-                'Evento': nombre_evento,
-                'Lugar': lugar,
-                'Fecha_Abreviada': fecha_abreviada,
-                'Hora': hora,
+                'Dia': item['Dia'].capitalize(), 'Categoria': categoria, 'Evento': nombre_evento,
+                'Lugar': lugar, 'Fecha_Abreviada': fecha_abreviada, 'Hora': hora
             })
-        
-        except Exception:
-            continue
-
+        except: continue
     return pd.DataFrame(eventos_procesados)
 
+# --- 8. FUNCIÓN CENTRALIZADA DE GENERACIÓN (ZIP) ---
+def procesar_generacion_zip(df_entrada):
+    fuentes = cargar_fuentes()
+    grupos = df_entrada.groupby('Fecha_Abreviada', sort=False)
+    total_grupos = len(grupos)
+    zip_buffer = io.BytesIO()
+    contador_secuencial = 1
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-# --- LÓGICA DE LA INTERFAZ (Principal) ---
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        for i, (fecha, grupo) in enumerate(grupos):
+            status_text.text(f"Procesando: {fecha}...")
+            paginas = paginar_eventos(grupo)
+            for idx_pag, pagina_data in enumerate(paginas):
+                img = generar_imagen_en_memoria(fecha, pagina_data, fuentes)
+                nombre_fecha_limpio = str(fecha).replace(" ", "").replace("/", "").upper()
+                nombre_archivo = f"{contador_secuencial}-POST-{nombre_fecha_limpio}.png"
+                img_bytes = io.BytesIO()
+                img.save(img_bytes, format='PNG') 
+                zf.writestr(nombre_archivo, img_bytes.getvalue())
+                contador_secuencial += 1
+            progress_bar.progress((i + 1) / total_grupos)
+            
+    status_text.success("¡Imágenes generadas exitosamente!")
+    progress_bar.empty()
+    return zip_buffer
 
-AGENDA_URL = "https://portaluniversidad.org.ar/agenda-cultural/"
-CONTENEDOR_CLASE = "entry themeform"
+# --- 9. INTERFAZ PRINCIPAL (TABS) ---
+tab1, tab2 = st.tabs(["🌐 Desde Web (Scraping)", "📂 Subir CSV (Manual)"])
 
-if st.button("🔄 Actualizar y Generar Imágenes desde la Web"):
-    with st.spinner("Conectando a la web y procesando datos..."):
-        
-        datos_en_bruto = obtener_texto_agenda(AGENDA_URL, CONTENEDOR_CLASE)
-
-        if isinstance(datos_en_bruto, str) and datos_en_bruto.startswith("ERROR"):
-            st.error(datos_en_bruto)
-        else:
-            df = texto_a_dataframe(datos_en_bruto)
-
-            if df.empty:
-                st.warning("⚠️ No se encontraron eventos. Verifica la URL.")
+with tab1:
+    st.info(f"Fuente de datos: **{AGENDA_URL}**")
+    if st.button("🔄 Escanear Web y Generar", key="btn_web"):
+        with st.spinner("Conectando a la web..."):
+            datos = obtener_texto_agenda(AGENDA_URL, CONTENEDOR_CLASE)
+            if isinstance(datos, str) and datos.startswith("ERROR"): st.error(datos)
             else:
-                st.success(f"✅ Agenda procesada: {len(df)} eventos listos.")
-                st.dataframe(df[['Dia', 'Categoria', 'Evento', 'Lugar', 'Fecha_Abreviada', 'Hora']])
-                
-                with st.spinner("Generando imágenes secuenciales..."):
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    fuentes = cargar_fuentes()
-                    grupos = df.groupby('Fecha_Abreviada', sort=False)
-                    total_grupos = len(grupos)
-                    
-                    zip_buffer = io.BytesIO()
-                    
-                    # --- CONTADOR GLOBAL PARA NOMBRADO SECUENCIAL ---
-                    contador_secuencial = 1
-                    
-                    with zipfile.ZipFile(zip_buffer, "w") as zf:
-                        for i, (fecha, grupo) in enumerate(grupos):
-                            status_text.text(f"Procesando: {fecha}...")
-                            
-                            paginas = paginar_eventos(grupo)
-                            
-                            for idx_pag, pagina_data in enumerate(paginas):
-                                img = generar_imagen_en_memoria(fecha, pagina_data, fuentes)
-                                
-                                # Limpieza del nombre de fecha (Ej: "MIE 10" -> "MIE10")
-                                nombre_fecha_limpio = str(fecha).replace(" ", "").replace("/", "").upper()
-                                
-                                # Nombrado secuencial: 1-POST-MIE10.png
-                                nombre_archivo = f"{contador_secuencial}-POST-{nombre_fecha_limpio}.png"
-                                
-                                img_bytes = io.BytesIO()
-                                img.save(img_bytes, format='PNG') 
-                                zf.writestr(nombre_archivo, img_bytes.getvalue())
-                                
-                                # Incrementamos contador por cada imagen creada (aunque sea del mismo día)
-                                contador_secuencial += 1
-                            
-                            progress_bar.progress((i + 1) / total_grupos)
-                    
-                    status_text.text("¡Listo! Imágenes generadas.")
-                    progress_bar.empty()
-                    
-                    st.download_button(
-                        label="📥 Descargar Imágenes (ZIP)",
-                        data=zip_buffer.getvalue(),
-                        file_name="posts_agenda_secuencial.zip",
-                        mime="application/zip"
-                    )
+                df_web = texto_a_dataframe(datos)
+                if df_web.empty: st.warning("⚠️ No se encontraron eventos.")
+                else:
+                    st.success(f"✅ {len(df_web)} eventos encontrados.")
+                    st.dataframe(df_web[['Dia', 'Categoria', 'Evento', 'Fecha_Abreviada']], height=150)
+                    zip_file = procesar_generacion_zip(df_web)
+                    st.download_button("📥 Descargar ZIP (Web)", zip_file.getvalue(), "posts_agenda_web.zip", "application/zip")
+
+with tab2:
+    st.markdown("Sube un CSV con las columnas: `Fecha_Abreviada`, `Evento`, `Categoria`, `Lugar`, `Hora`")
+    uploaded_file = st.file_uploader("Sube tu archivo .csv", type=["csv"])
+    if uploaded_file is not None:
+        try:
+            try: df_csv = pd.read_csv(uploaded_file, encoding='utf-8', dtype=str)
+            except UnicodeDecodeError: df_csv = pd.read_csv(uploaded_file, encoding='latin-1', dtype=str)
+            df_csv.fillna("", inplace=True)
+            df_csv.columns = df_csv.columns.str.strip()
+            req_cols = ['Fecha_Abreviada', 'Evento', 'Categoria', 'Lugar', 'Hora']
+            missing = [c for c in req_cols if c not in df_csv.columns]
+            if missing: st.error(f"❌ Faltan columnas: {', '.join(missing)}")
+            else:
+                st.success(f"✅ Archivo cargado: {len(df_csv)} eventos.")
+                st.dataframe(df_csv[['Categoria', 'Evento', 'Fecha_Abreviada']], height=150)
+                if st.button("🚀 Generar desde CSV", key="btn_csv"):
+                    zip_file = procesar_generacion_zip(df_csv)
+                    st.download_button("📥 Descargar ZIP (CSV)", zip_file.getvalue(), "posts_agenda_csv.zip", "application/zip")
+        except Exception as e: st.error(f"Error al leer el archivo: {e}")
